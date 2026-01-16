@@ -23,18 +23,16 @@ void CorpusMiner::load_directory(const std::string& path, double sampling) {
         if (entry.path().extension() == ".txt") paths.push_back(entry.path());
     }
 
-    // Shuffle files before sampling
     std::random_device rd;
     std::mt19937 g(rd());
     std::shuffle(paths.begin(), paths.end(), g);
 
-    // Apply sampling
     size_t total_files = paths.size();
     size_t n = static_cast<size_t>(total_files * sampling);
     if (n > total_files) n = total_files;
     paths.resize(n);
 
-    std::cout << "[LOG] Found " << total_files << " .txt files. Processing " << n 
+    std::cout << "[LOG] Found " << total_files << " .txt files. Processing " << n
               << " files (sampling rate: " << (sampling * 100) << "%)" << std::endl;
     std::vector<std::vector<std::string>> raw_docs(n);
 
@@ -50,30 +48,43 @@ void CorpusMiner::load_directory(const std::string& path, double sampling) {
     }
     stop_timer("Tokenization", p1_start);
 
-    std::cout << "[LOG] Phase II: Building global dictionary and encoding ID..." << std::endl;
+    std::cout << "[LOG] Phase II: Building dictionary, encoding ID, and counting DF..." << std::endl;
     auto p2_start = start_timer();
     docs.reserve(n);
     file_paths.reserve(n);
+
+    std::vector<uint32_t> word_last_doc_id;
+    word_df.clear();
+
     for (size_t i = 0; i < n; ++i) {
         file_paths.push_back(paths[i].string());
         std::vector<uint32_t> encoded;
         encoded.reserve(raw_docs[i].size());
 
         for (const auto& w : raw_docs[i]) {
+            uint32_t w_id;
             auto it = word_to_id.find(w);
             if (it == word_to_id.end()) {
-                uint32_t new_id = id_to_word.size();
-                word_to_id[w] = new_id;
+                w_id = id_to_word.size();
+                word_to_id[w] = w_id;
                 id_to_word.push_back(w);
-                encoded.push_back(new_id);
+                word_df.push_back(0);
+                word_last_doc_id.push_back(0);
             } else {
-                encoded.push_back(it->second);
+                w_id = it->second;
+            }
+
+            encoded.push_back(w_id);
+
+            if (word_last_doc_id[w_id] != (uint32_t)i + 1) {
+                word_df[w_id]++;
+                word_last_doc_id[w_id] = (uint32_t)i + 1;
             }
         }
         docs.push_back(std::move(encoded));
         raw_docs[i].clear();
     }
-    stop_timer("Dictionary & Encoding", p2_start);
+    stop_timer("Dictionary, Encoding & DF counting", p2_start);
     stop_timer("Total Loading", total_start);
 }
 
@@ -85,8 +96,23 @@ void CorpusMiner::mine(int min_docs, int ngrams, const std::string& output_csv) 
     std::unordered_map<std::vector<uint32_t>, std::vector<Occurrence>, VectorHasher> seeds;
 
     for (uint32_t d = 0; d < docs.size(); ++d) {
+        // PROGRESS: Step 1
+        if (d % 500 == 0 || d == docs.size() - 1) {
+            std::cout << "[LOG] Seed Generation: " << (d + 1) << "/" << docs.size() << " documents processed...\r" << std::flush;
+        }
+
         if (docs[d].size() < (size_t)ngrams) continue;
         for (uint32_t p = 0; p <= docs[d].size() - ngrams; ++p) {
+            bool potentially_frequent = true;
+            for (int i = 0; i < ngrams; ++i) {
+                if (word_df[docs[d][p + i]] < (uint32_t)min_docs) {
+                    potentially_frequent = false;
+                    break;
+                }
+            }
+
+            if (!potentially_frequent) continue;
+
             std::vector<uint32_t> ngram;
             ngram.reserve(ngrams);
             for (int i = 0; i < ngrams; ++i) {
@@ -95,6 +121,9 @@ void CorpusMiner::mine(int min_docs, int ngrams, const std::string& output_csv) 
             seeds[ngram].push_back({d, p});
         }
     }
+    std::cout << std::endl;
+
+    size_t total_seeds_generated = seeds.size();
 
     std::vector<Phrase> candidates;
     for (auto& [toks, occs] : seeds) {
@@ -116,12 +145,17 @@ void CorpusMiner::mine(int min_docs, int ngrams, const std::string& output_csv) 
     auto s3_start = start_timer();
     std::vector<Phrase> final_phrases;
 
-    // Optimized marking structure: doc_id -> byte vector (1 - occupied, 0 - free)
     std::vector<std::vector<uint8_t>> processed(docs.size());
     for(size_t i=0; i<docs.size(); ++i) processed[i].assign(docs[i].size(), 0);
 
     for (size_t c_idx = 0; c_idx < candidates.size(); ++c_idx) {
         if (g_stop_requested) break;
+
+        // PROGRESS: Step 3
+        if (c_idx % 1000 == 0 || c_idx == candidates.size() - 1) {
+            std::cout << "[LOG] Expansion Progress: " << (c_idx + 1) << "/" << candidates.size()
+                      << " candidates | Mined: " << final_phrases.size() << "\r" << std::flush;
+        }
 
         auto& cand = candidates[c_idx];
         bool skip = true;
@@ -130,7 +164,6 @@ void CorpusMiner::mine(int min_docs, int ngrams, const std::string& output_csv) 
         }
         if (skip) continue;
 
-        // Expansion with "jumps"
         while (true) {
             std::unordered_map<uint32_t, std::vector<Occurrence>> next_word_occs;
             for (auto& o : cand.occs) {
@@ -161,7 +194,6 @@ void CorpusMiner::mine(int min_docs, int ngrams, const std::string& output_csv) 
             } else break;
         }
 
-        // Mark positions
         for (auto& o : cand.occs) {
             for (uint32_t i = 0; i < cand.tokens.size(); ++i) {
                 if (o.pos + i < processed[o.doc_id].size())
@@ -169,16 +201,23 @@ void CorpusMiner::mine(int min_docs, int ngrams, const std::string& output_csv) 
             }
         }
         final_phrases.push_back(std::move(cand));
-
-        if (final_phrases.size() % 1000 == 0) {
-            std::cout << "[LOG] Progress: " << c_idx << "/" << candidates.size()
-                      << " candidates checked. Mined: " << final_phrases.size() << "\r" << std::flush;
-        }
     }
     std::cout << std::endl;
     stop_timer("Expansion & Pruning", s3_start);
 
-    std::cout << "[LOG] Step 4: Saving " << final_phrases.size() << " results to " << output_csv << "..." << std::endl;
+    // STATISTICS
+    size_t count_6plus = 0;
+    for (const auto& p : final_phrases) {
+        if (p.tokens.size() >= 6) count_6plus++;
+    }
+
+    std::cout << "\n========== MINING STATISTICS ==========" << std::endl;
+    std::cout << "Total unique seeds generated: " << total_seeds_generated << std::endl;
+    std::cout << "Total phrases mined:          " << final_phrases.size() << std::endl;
+    std::cout << "Long phrases (6+ words):      " << count_6plus << std::endl;
+    std::cout << "=======================================\n" << std::endl;
+
+    std::cout << "[LOG] Step 4: Saving results to " << output_csv << "..." << std::endl;
     auto s4_start = start_timer();
     save_to_csv(final_phrases, output_csv);
     stop_timer("CSV Saving", s4_start);
