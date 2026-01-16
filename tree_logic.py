@@ -5,84 +5,90 @@ import numpy as np
 import re
 
 def normalize_phrase(p):
-    """Normalize whitespace to ensure dictionary lookups don't fail."""
+    """Normalize whitespace and case for consistent lookups."""
     return " ".join(str(p).lower().strip().split())
 
 def build_phrase_tree(df):
     """
-    Improved tree building that finds the 'longest existing' parent
-    to ensure hierarchy even if intermediate steps are missing.
+    Standard tree building logic.
+    Finds the 'longest existing' parent for each phrase (prefix or suffix).
     """
-    # 1. Sanitize and Sort
     df['phrase'] = df['phrase'].apply(normalize_phrase)
     df = df.sort_values('length').reset_index(drop=True)
     df['id'] = df.index
     df['parent_id'] = None
     df['level'] = 0
-    df['display_phrase'] = df['phrase']
 
-    # 2. Build a fast lookup map: {phrase_string: row_index}
     phrase_to_id = {row.phrase: i for i, row in df.iterrows()}
 
-    # 3. Build a sorted list of phrases to search against (longest first for parent matching)
-    # This helps us find the "closest" (longest) parent quickly.
-    sorted_phrases = df.sort_values('length', ascending=False)
+    print("Linking Parents...")
+    for i in tqdm(range(len(df)), desc="Linking"):
+        words = df.iloc[i].phrase.split()
+        l = len(words)
+        found = False
 
-    print("Linking Parents (Robust Substring Match)...")
-    for i in tqdm(range(len(df)), desc="Linking Parents"):
-        current_row = df.iloc[i]
-        current_phrase = current_row.phrase
-        current_len = current_row.length
-
-        # We only look for parents that are shorter than the current phrase
-        # To keep it O(N), we check immediate word-stripping first (N-1, N-2...)
-        words = current_phrase.split()
-        found_parent = False
-
-        # Try shrinking the phrase from left or right until we find a match in our set
-        # We try stripping 1 word, then 2, etc.
-        for drop in range(1, current_len - 3): # Min length is 4
-            # Check suffix (remove words from start)
+        # Search for the longest available parent in the dataset
+        for drop in range(1, l - 1):
             suffix = " ".join(words[drop:])
-            if suffix in phrase_to_id:
-                best_parent_idx = phrase_to_id[suffix]
-                found_parent = True
+            prefix = " ".join(words[:-drop])
 
-            # Check prefix (remove words from end)
-            if not found_parent:
-                prefix = " ".join(words[:-drop])
-                if prefix in phrase_to_id:
-                    best_parent_idx = phrase_to_id[prefix]
-                    found_parent = True
-
-            if found_parent:
-                parent_text = df.at[best_parent_idx, 'phrase']
-                df.at[i, 'parent_id'] = int(best_parent_idx)
-                df.at[i, 'level'] = int(df.at[best_parent_idx, 'level']) + 1
-
-                # Create display version: business <PARENT>
-                # Use regex for safe replacement to ensure we only replace the first/last occurrence
-                # to avoid mangling the string if words repeat.
-                display = current_phrase.replace(parent_text, " <PARENT> ")
-                df.at[i, 'display_phrase'] = " ".join(display.split())
-                break # Stop at the longest match
+            for potential_parent in [suffix, prefix]:
+                if potential_parent in phrase_to_id:
+                    p_idx = phrase_to_id[potential_parent]
+                    df.at[i, 'parent_id'] = int(p_idx)
+                    df.at[i, 'level'] = int(df.at[p_idx, 'level']) + 1
+                    found = True
+                    break
+            if found: break
 
     return df
 
+def compress_unbranched_branches(nodes, parent_phrase=None):
+    """
+    Recursive function to collapse 'ladders'.
+    If a node leads to exactly one child, it skips to the end of that
+    chain (the longest variant) or to the first branching point.
+    """
+    compressed = []
+
+    for node in nodes:
+        curr = node
+
+        # 1. Skip nodes that have exactly one child (the 'ladder')
+        # This moves 'curr' to the longest variant in the unbranched path
+        while len(curr['children']) == 1:
+            curr = curr['children'][0]
+
+        # 2. Update the display phrase for the new representative node
+        # It must be relative to the parent ABOVE the entire collapsed chain
+        if parent_phrase and parent_phrase in curr['phrase']:
+            # Replace the parent part with <PARENT>
+            display = curr['phrase'].replace(parent_phrase, " <PARENT> ")
+            curr['display_phrase'] = " ".join(display.split())
+        else:
+            # If it's a root node, show the full phrase
+            curr['display_phrase'] = curr['phrase']
+
+        # 3. Recursively process children of the promoted node
+        if curr['children']:
+            # The new 'curr' is now the parent for its children
+            curr['children'] = compress_unbranched_branches(curr['children'], curr['phrase'])
+
+        compressed.append(curr)
+
+    return compressed
+
 def generate_html_tree(df, output_file="tree_view.html", max_nodes=15000):
-    """Generates a collapsible HTML tree view with hierarchy integrity."""
+    """Generates a collapsible HTML tree view with compression logic applied."""
 
     if 'score' not in df.columns:
-        print("'score' column missing. Calculating temporary score...")
-        max_l = df['length'].max()
-        max_f = df['freq'].max()
+        max_l, max_f = df['length'].max(), df['freq'].max()
         df['score'] = np.sqrt((1 - df['length']/max_l)**2 + (1 - df['freq']/max_f)**2)
 
-    # 1. Select nodes and enforce Parent Integrity
+    # 1. Select top nodes and ensure parent integrity (all ancestors included)
     top_df = df.sort_values('score').head(max_nodes)
     all_visible_ids = set(top_df['id'].tolist())
 
-    print("Enforcing tree integrity...")
     for _, row in top_df.iterrows():
         curr_p = row['parent_id']
         while curr_p is not None:
@@ -93,20 +99,24 @@ def generate_html_tree(df, output_file="tree_view.html", max_nodes=15000):
 
     final_viz_df = df[df['id'].isin(all_visible_ids)].copy()
 
-    # 2. Build JSON
+    # 2. Build the JSON Tree structure
     nodes_dict = final_viz_df.to_dict('records')
     id_map = {int(n['id']): n for n in nodes_dict}
     for n in nodes_dict: n['children'] = []
 
-    tree = []
-    for n in tqdm(nodes_dict, desc="Structuring JSON"):
+    raw_tree = []
+    for n in nodes_dict:
         p_id = n.get('parent_id')
         if p_id is None or int(p_id) not in id_map:
-            tree.append(n)
+            raw_tree.append(n)
         else:
             id_map[int(p_id)]['children'].append(n)
 
-    # 3. Template
+    # 3. Apply the compression logic to remove unbranched chains
+    print("Compressing unbranched paths...")
+    final_tree = compress_unbranched_branches(raw_tree)
+
+    # 4. Generate the HTML (Template remains standard)
     html_template = """
     <!DOCTYPE html>
     <html>
@@ -130,7 +140,7 @@ def generate_html_tree(df, output_file="tree_view.html", max_nodes=15000):
         </style>
     </head>
     <body>
-        <h2>Sequential Phrase Discovery Tree</h2>
+        <h2>Sequential Phrase Discovery Tree (Compressed)</h2>
         <div class="tree-container" id="tree"></div>
         <script>
             const data = %DATA%;
@@ -168,4 +178,4 @@ def generate_html_tree(df, output_file="tree_view.html", max_nodes=15000):
     </html>
     """
     with open(output_file, "w", encoding="utf-8") as f:
-        f.write(html_template.replace("%DATA%", json.dumps(tree)))
+        f.write(html_template.replace("%DATA%", json.dumps(final_tree)))

@@ -1,6 +1,7 @@
-# Настройки компилятора
+# Compiler settings
 CXX = g++
-CXXFLAGS = -std=c++20 -O3 -march=native -pthread -flto -Wall -Wextra
+# Added -ltbb to link the Threading Building Blocks library
+CXXFLAGS = -std=c++20 -O3 -march=native -pthread -flto -Wall -Wextra -ltbb
 
 CXXFLAGS += -fopenmp
 
