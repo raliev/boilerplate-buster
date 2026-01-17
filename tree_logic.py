@@ -83,8 +83,7 @@ def generate_html_tree(df, output_file="tree_view.html", max_nodes=15000):
 
     if 'score' not in df.columns:
         max_l, max_f = df['length'].max(), df['freq'].max()
-        df['score'] = np.sqrt((1 - df['length']/max_l)**2 + (1 - df['freq']/max_f)**2)
-
+        df['score'] = np.sqrt((1 - df['length']/max_l)**2 + (1 - np.log1p(df['freq'])/np.log1p(max_f))**2)
     # 1. Select top nodes and ensure parent integrity (all ancestors included)
     top_df = df.sort_values('score').head(max_nodes)
     all_visible_ids = set(top_df['id'].tolist())

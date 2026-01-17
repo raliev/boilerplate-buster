@@ -17,6 +17,7 @@
 #include <queue>
 #include <memory>
 #include <cstring>
+#include <vector>
 
 namespace fs = std::filesystem;
 
@@ -174,96 +175,141 @@ size_t CorpusMiner::get_current_rss_mb() {
     return (pages * sysconf(_SC_PAGESIZE)) / (1024 * 1024);
 }
 
+inline uint64_t hash_tokens(const uint32_t* tokens, int n) {
+    uint64_t h = 14695981039346656037ULL; // FNV offset basis
+    for (int i = 0; i < n; ++i) {
+        h ^= static_cast<uint64_t>(tokens[i]);
+        h *= 1099511628211ULL; // FNV prime
+    }
+    return h;
+}
+
 void CorpusMiner::mine(int min_docs, int ngrams, const std::string& output_csv) {
     if (max_threads > 0) {
         omp_set_num_threads(max_threads);
         std::cout << "[LOG] Threads limited to: " << max_threads << std::endl;
     }
 
+// 1. Dynamic Filter Size: Aim for ~20% of memory limit, capped at 2GB.
+    // A larger filter significantly reduces collisions for bigrams.
+    size_t filter_size;
+    if (memory_limit_mb > 0) {
+        filter_size = (memory_limit_mb * 1024ULL * 1024ULL) / 5; // 20% of limit
+        if (filter_size > 2048ULL * 1024ULL * 1024ULL) filter_size = 2048ULL * 1024ULL * 1024ULL;
+    } else {
+        filter_size = 512ULL * 1024ULL * 1024ULL;
+    }
+
+    std::cout << "[LOG] Initializing Bloom Filter: " << (filter_size / (1024 * 1024)) << " MB" << std::endl;
+    std::vector<uint8_t> filter_counters(filter_size, 0);
+
+    // Pass 1: Frequency Estimation
+    std::cout << "[LOG] Bloom Pass: Estimating n-gram frequencies..." << std::endl;
+    #pragma omp parallel
+    {
+        std::ifstream local_bin;
+        if (!in_memory_only) local_bin.open(bin_corpus_path, std::ios::binary);
+
+        #pragma omp for
+        for (uint32_t d = 0; d < (uint32_t)doc_lengths.size(); ++d) {
+            std::vector<uint32_t> local_doc;
+            const std::vector<uint32_t>* doc_ptr = (in_memory_only) ? &docs[d] : &local_doc;
+            if (!in_memory_only) {
+                local_doc.resize(doc_lengths[d]);
+                local_bin.seekg(doc_offsets[d]);
+                local_bin.read((char*)local_doc.data(), doc_lengths[d] * sizeof(uint32_t));
+            }
+
+            if (doc_ptr->size() < (size_t)ngrams) continue;
+
+            for (uint32_t p = 0; p <= doc_ptr->size() - ngrams; ++p) {
+                uint64_t h = hash_tokens(doc_ptr->data() + p, ngrams);
+                size_t idx = h % filter_size;
+
+                uint8_t* target = &filter_counters[idx];
+                uint8_t current = __atomic_load_n(target, __ATOMIC_RELAXED);
+                while (current < 255) {
+                    if (__atomic_compare_exchange_n(target, &current, current + 1, false, __ATOMIC_RELAXED, __ATOMIC_RELAXED))
+                        break;
+                }
+            }
+        }
+    }
+    // Pass 2: Collection with Statistics
     auto mine_start = start_timer();
-    std::cout << "[LOG] Step 1: Gathering " << ngrams << "-gram seeds (Disk-based)..." << std::endl;
+    std::cout << "[LOG] Step 1: Gathering " << ngrams << "-gram seeds..." << std::endl;
     auto s1_start = start_timer();
+    size_t total_processed = 0;
+    size_t seeds_passed = 0;
+    size_t seeds_rejected = 0;
+
     std::string temp_dir = "./miner_tmp";
     fs::create_directories(temp_dir);
     std::vector<std::string> chunk_files;
     std::vector<RawSeedEntry> buffer;
-
     buffer.reserve(1000000);
-
     int chunk_id = 0;
+
     auto flush_buffer = [&]() {
-    if (buffer.empty()) return;
-    if (in_memory_only) return;
-
-        // Use a more descriptive log message to distinguish between
-        // a mid-process flush and the final flush.
-        std::cout << "\n[LOG] Flushing " << buffer.size() << " seeds to disk... (RAM: "
-                  << get_current_rss_mb() << " MB)" << std::endl;
-
+        if (buffer.empty()) return;
+        if (in_memory_only) return;
+        std::cout << "\n[LOG] Flushing " << buffer.size() << " seeds to disk... (RAM: " << get_current_rss_mb() << " MB)" << std::endl;
         std::sort(std::execution::par, buffer.begin(), buffer.end(), [](const RawSeedEntry& a, const RawSeedEntry& b) {
-            for (int i = 0; i < a.n; ++i) {
-                if (a.tokens[i] != b.tokens[i]) return a.tokens[i] < b.tokens[i];
-            }
-            // Ensure stable sort order for identical phrases
-            if (a.doc_id != b.doc_id) return a.doc_id < b.doc_id;
-            return a.pos < b.pos;
+            for (int i = 0; i < a.n; ++i) if (a.tokens[i] != b.tokens[i]) return a.tokens[i] < b.tokens[i];
+            return a.doc_id < b.doc_id;
         });
-
-        // Generate unique filename
         std::string fname = temp_dir + "/chunk_" + std::to_string(chunk_id++) + ".bin";
-
-        // CRITICAL FIX: Save the filename so Step 1.5 can find it
         chunk_files.push_back(fname);
-
         std::ofstream out(fname, std::ios::binary);
-        if (out) {
-            out.write((char*)buffer.data(), buffer.size() * sizeof(RawSeedEntry));
-        }
-
+        if (out) out.write((char*)buffer.data(), buffer.size() * sizeof(RawSeedEntry));
         buffer.clear();
         buffer.shrink_to_fit();
     };
 
     for (uint32_t d = 0; d < doc_lengths.size(); ++d) {
-            // Use 75% threshold to prevent OOM during peak sort operations
-            if (memory_limit_mb > 0 && get_current_rss_mb() >= (size_t)(memory_limit_mb * 0.75)) {
-                flush_buffer();
-            }
+        if (memory_limit_mb > 0 && get_current_rss_mb() >= (size_t)(memory_limit_mb * 0.75)) flush_buffer();
         const auto& current_doc = fetch_doc(d);
-
         if (current_doc.size() < (size_t)ngrams) continue;
 
-        // Check memory limits against total RSS
-        if (memory_limit_mb > 0 && get_current_rss_mb() >= (size_t)(memory_limit_mb * 0.9)) {
-            flush_buffer();
-        }
-
-        // Fix log: use doc_offsets.size() instead of docs.size()
-        if (d % 500 == 0 || d == doc_lengths.size() - 1) {
-                std::cout << "[LOG] Scanning: " << (d + 1) << "/" << doc_lengths.size()
-                          << " | Chunks: " << chunk_id << " | RAM: " << get_current_rss_mb() << " MB\r" << std::flush;
-            }
-
-        // Inner loop must use current_doc
         for (uint32_t p = 0; p <= current_doc.size() - ngrams; ++p) {
-            bool potentially_frequent = true;
-            for (int i = 0; i < ngrams; ++i) {
-                if (word_df[current_doc[p + i]] < (uint32_t)min_docs) {
-                    potentially_frequent = false;
-                    break;
-                }
-            }
-            if (!potentially_frequent) continue;
+            total_processed++;
+            uint64_t h = hash_tokens(&current_doc[p], ngrams);
 
-            RawSeedEntry entry;
-            std::memset(&entry, 0, sizeof(RawSeedEntry)); // Clear all bytes including padding
-            entry.n = ngrams;
-            entry.doc_id = d;
-            entry.pos = p;
-            for (int i = 0; i < ngrams; ++i) entry.tokens[i] = current_doc[p + i];
-            buffer.push_back(entry);
+            // Bloom Filter check
+            if (filter_counters[h % filter_size] >= (uint8_t)std::min(min_docs, 255)) {
+                // DF check
+                bool df_ok = true;
+                for (int i = 0; i < ngrams; ++i) {
+                    if (word_df[current_doc[p+i]] < (uint32_t)min_docs) { df_ok = false; break; }
+                }
+
+                if (df_ok) {
+                    RawSeedEntry entry;
+                    std::memset(&entry, 0, sizeof(RawSeedEntry));
+                    entry.n = ngrams; entry.doc_id = d; entry.pos = p;
+                    for (int i = 0; i < ngrams; ++i) entry.tokens[i] = current_doc[p + i];
+                    buffer.push_back(entry);
+                    seeds_passed++;
+                } else {
+                    seeds_rejected++;
+                }
+            } else {
+                seeds_rejected++;
+            }
+        }
+        if (d % 500 == 0 || d == doc_lengths.size() - 1) {
+            std::cout << "[LOG] Scanning: " << (d + 1) << "/" << doc_lengths.size() << " | Seeds Found: " << seeds_passed << " \r" << std::flush;
         }
     }
+
+    // Print Efficiency Statistics
+    double efficiency = (total_processed > 0) ? (100.0 * seeds_rejected / total_processed) : 0;
+    std::cout << "\n[BLOOM STATS] Total n-grams: " << total_processed << std::endl;
+    std::cout << "[BLOOM STATS] Accepted:    " << seeds_passed << std::endl;
+    std::cout << "[BLOOM STATS] Rejected:    " << seeds_rejected << " (" << efficiency << "% reduction)" << std::endl;
+
+    filter_counters.clear();
+    filter_counters.shrink_to_fit();
     if (in_memory_only) {
         std::cout << "[LOG] In-Memory Mode: Sorting all " << buffer.size() << " seeds in RAM..." << std::endl;
         std::sort(std::execution::par, buffer.begin(), buffer.end(), [](const RawSeedEntry& a, const RawSeedEntry& b) {

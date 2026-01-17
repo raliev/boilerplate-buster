@@ -8,6 +8,9 @@ def main():
     parser.add_argument("--input", default="results_max.csv", help="Input CSV file")
     parser.add_argument("--output", default="results_tree.csv", help="Output CSV file with parent info")
     parser.add_argument("--limit", type=int, default=15000, help="Max nodes to include in HTML")
+    # New parameters
+    parser.add_argument("--min_l", type=int, default=0, help="Minimum phrase length")
+    parser.add_argument("--min_f", type=int, default=0, help="Minimum frequency (doc count)")
     args = parser.parse_args()
 
     print(f"Reading {args.input}...")
@@ -23,6 +26,15 @@ def main():
         df = df.rename(columns={'doc_count': 'freq'})
     if 'length' not in df.columns and 'word_count' in df.columns:
         df = df.rename(columns={'word_count': 'length'})
+
+    if args.min_l > 0 or args.min_f > 0:
+        initial_len = len(df)
+        df = df[(df['length'] >= args.min_l) & (df['freq'] >= args.min_f)]
+        print(f"Filtered {initial_len} down to {len(df)} phrases (Min L: {args.min_l}, Min F: {args.min_f})")
+
+    if df.empty:
+        print("No phrases match the specified criteria. Exiting.")
+        return
 
     print(f"Building hierarchy for {len(df)} sequences...")
     tree_df = build_phrase_tree(df)
