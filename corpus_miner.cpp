@@ -712,7 +712,6 @@ void CorpusMiner::mine(int min_docs, int ngrams, const std::string& output_csv) 
         while (true) {
             std::unordered_map<uint32_t, std::vector<Occurrence>> next_word_occs;
             for (auto& o : cand.occs) {
-                // Использование кэшированного чтения документа с диска
                 const auto& doc = fetch_doc(o.doc_id);
                 uint32_t np = o.pos + (uint32_t)cand.tokens.size();
                 if (np < doc.size()) {
