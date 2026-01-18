@@ -21,6 +21,8 @@ private:
     int max_threads = 0;
     size_t memory_limit_mb = 0;
 
+    std::string file_mask = "";
+
     // Вспомогательный метод для получения текущего потребления RAM (RSS)
     size_t get_current_rss_mb();
 
@@ -39,6 +41,7 @@ private:
     const std::vector<uint32_t>& fetch_doc(uint32_t doc_id) const;
 
 public:
+    void set_mask(const std::string& mask) { file_mask = mask; }
     void set_limits(int threads, size_t mem_mb, size_t cache_size, bool in_mem, bool preload) {
             max_threads = threads;
             memory_limit_mb = mem_mb;

@@ -26,9 +26,12 @@ int main(int argc, char** argv) {
     bool in_mem = false;
     bool preload = false;
 
+    std::string mask = "";
+
     for (int i = 1; i < argc; ++i) {
             std::string arg = argv[i];
             if (arg == "--n" && i + 1 < argc) min_docs = std::stoi(argv[++i]);
+            else if (arg == "--mask" && i + 1 < argc) mask = argv[++i];
             else if (arg == "--ngrams" && i + 1 < argc) ngrams = std::stoi(argv[++i]);
             else if (arg == "--mem" && i + 1 < argc) mem_limit = std::stoi(argv[++i]);
             else if (arg == "--threads" && i + 1 < argc) threads = std::stoi(argv[++i]);
@@ -42,6 +45,7 @@ int main(int argc, char** argv) {
     if (in_mem) std::cout << "[MODE] Running in In-Memory mode (No Disk BIN)" << std::endl;
     CorpusMiner m;
     m.set_limits(threads, mem_limit, cache_size, in_mem, preload);
+    m.set_mask(mask);
     m.load_directory(directory, sampling);
 
     std::cout << "[START] Beginning mining with min_docs=" << min_docs << ", ngrams=" << ngrams << std::endl;

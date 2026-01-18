@@ -73,11 +73,26 @@ const std::vector<uint32_t>& CorpusMiner::fetch_doc(uint32_t doc_id) const {
 void CorpusMiner::load_directory(const std::string& path, double sampling) {
     auto total_start = start_timer();
 
-    std::cout << "[LOG] Scanning directory: " << path << std::endl;
-    std::vector<fs::path> paths;
-    for (const auto& entry : fs::recursive_directory_iterator(path)) {
-        if (entry.path().extension() == ".txt") paths.push_back(entry.path());
-    }
+    std::cout << "[LOG] Scanning directory: " << path << (file_mask.empty() ? " (All files)" : " (Mask: " + file_mask + ")") << std::endl;
+        std::vector<fs::path> paths;
+
+        for (const auto& entry : fs::recursive_directory_iterator(path)) {
+            if (!fs::is_regular_file(entry)) continue;
+
+            bool match = false;
+            if (file_mask.empty() || file_mask == "*") {
+                match = true;
+            } else if (file_mask.size() >= 2 && file_mask.substr(0, 2) == "*.") {
+                // Wildcard extension match (e.g., "*.txt" -> ".txt")
+                std::string target_ext = file_mask.substr(1);
+                if (entry.path().extension() == target_ext) match = true;
+            } else {
+                // Exact filename match
+                if (entry.path().filename() == file_mask) match = true;
+            }
+
+            if (match) paths.push_back(entry.path());
+        }
 
     std::random_device rd;
     std::mt19937 g(rd());
