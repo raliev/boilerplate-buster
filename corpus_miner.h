@@ -24,11 +24,28 @@ private:
     // Вспомогательный метод для получения текущего потребления RAM (RSS)
     size_t get_current_rss_mb();
 
+    std::string bin_corpus_path = "corpus_data.bin";
+    std::vector<size_t> doc_offsets;
+    std::vector<uint32_t> doc_lengths;
+
+    // Simple Cache: doc_id -> token vector
+    mutable std::mutex cache_mtx;
+    mutable std::unordered_map<uint32_t, std::vector<uint32_t>> doc_cache;
+
+    bool in_memory_only = false;
+    bool preload_cache = false;
+    size_t max_cache_size = 1000;
+
+    const std::vector<uint32_t>& fetch_doc(uint32_t doc_id) const;
+
 public:
-    void set_limits(int threads, size_t mem_mb) {
-        max_threads = threads;
-        memory_limit_mb = mem_mb;
-    }
+    void set_limits(int threads, size_t mem_mb, size_t cache_size, bool in_mem, bool preload) {
+            max_threads = threads;
+            memory_limit_mb = mem_mb;
+            max_cache_size = cache_size;
+            in_memory_only = in_mem;
+            preload_cache = preload;
+        }
 
     void load_directory(const std::string& path, double sampling = 1.0);
     void mine(int min_docs, int ngrams, const std::string& output_csv);
