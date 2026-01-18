@@ -12,7 +12,7 @@ ifeq ($(UNAME_S), Darwin)
     
     # Added -fno-stack-check as it sometimes interferes with Mach-O relocations
     CXXFLAGS = -std=c++20 -g -O1 -march=native -pthread -Wall -Wextra -fopenmp \
-               -fno-stack-check -I$(BREW_PREFIX)/include -fsanitize=address
+               -fno-stack-check -I$(BREW_PREFIX)/include
 
     # -Wl,-ld_classic: Uses the older, more stable linker that handles GCC better
     # -Wl,-no_compact_unwind: Fixes issues with OpenMP/Exception handling relocations
