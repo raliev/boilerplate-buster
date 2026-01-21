@@ -33,12 +33,18 @@ int main(int argc, char** argv) {
     bool in_mem = false;
     bool preload = false;
     std::string mask = "";
+    bool use_spmf = false;
+    std::string spmf_params = "";
+    std::string spmf_jar = "./spmf.jar";
 
-    std::string algo_name = "bloom";   // NEW default
+    std::string algo_name = "bloomspan";   // NEW default
 
     for (int i = 1; i < argc; ++i) {
         std::string arg = argv[i];
         if (arg == "--n" && i + 1 < argc) min_docs = std::stoi(argv[++i]);
+        else if (arg == "--spmf") use_spmf = true;
+        else if (arg == "--spmf-params" && i + 1 < argc) spmf_params = argv[++i];
+        else if (arg == "--spmf-jar-location" && i + 1 < argc) spmf_jar = argv[++i];
         else if (arg == "--mask" && i + 1 < argc) mask = argv[++i];
         else if (arg == "--ngrams" && i + 1 < argc) ngrams = std::stoi(argv[++i]);
         else if (arg == "--csv-delimiter" && i + 1 < argc) {
@@ -69,18 +75,23 @@ int main(int argc, char** argv) {
         corpus.load_directory(input_path, sampling);
     }
 
-    // NEW: Select algorithm and run it
-    AlgorithmKind kind = parse_algorithm_kind(algo_name);
-    auto algo = make_algorithm(kind);
-
-    MiningParams params{min_docs, ngrams, "results_max.csv"};
-
-    std::cout << "[START] Beginning mining with algorithm=" << algo->name()
-              << ", min_docs=" << min_docs << ", ngrams=" << ngrams << std::endl;
-
-    std::vector<Phrase> phrases = algo->mine(corpus, params);
-
-    corpus.save_to_csv(phrases, params.output_csv);
+if (use_spmf) {
+        // If user didn't provide specific params, use the default min_docs
+        if (spmf_params.empty()) spmf_params = std::to_string(min_docs);
+        std::cout << "[START] Entering SPMF Wrapper Mode..." << std::endl;
+        std::cout << "[START] Beginning mining with algorithm=" << algo_name
+                      << ", min_docs=" << min_docs << ", ngrams=" << ngrams << std::endl;
+        corpus.run_spmf(algo_name, spmf_params, spmf_jar, min_docs, "results_max.csv");
+    } else {
+        // Standard C++ execution
+        AlgorithmKind kind = parse_algorithm_kind(algo_name);
+        auto algo = make_algorithm(kind);
+        MiningParams params{min_docs, ngrams, "results_max.csv"};
+        std::cout << "[START] Beginning mining with algorithm=" << algo_name
+                      << ", min_docs=" << min_docs << ", ngrams=" << ngrams << std::endl;
+        std::vector<Phrase> phrases = algo->mine(corpus, params);
+        corpus.save_to_csv(phrases, params.output_csv);
+    }
 
     std::cout << "[DONE] Process finished." << std::endl;
     return 0;

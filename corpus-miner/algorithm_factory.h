@@ -12,7 +12,7 @@ enum class AlgorithmKind {
 };
 
 inline AlgorithmKind parse_algorithm_kind(const std::string& name) {
-    if (name == "bloom" || name == "bloom_ngram" || name == "default")
+    if (name == "bloomspan" || name == "default")
         return AlgorithmKind::BloomNgram;
     if (name == "bide") // Add this
         return AlgorithmKind::Bide;

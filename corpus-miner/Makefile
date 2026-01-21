@@ -44,7 +44,7 @@ $(TARGET): $(OBJS)
 	$(CXX) $(CXXFLAGS) -c $< -o $@
 
 clean:
-	rm -f $(OBJS) $(TARGET) corpus_data.bin
+	rm -f $(OBJS) $(TARGET) corpus_data.bin && rm -f miner_tmp
 
 clean-reports:
 	rm -f results_max.csv results_tree.csv visualization.html

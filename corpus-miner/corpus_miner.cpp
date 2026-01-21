@@ -18,6 +18,7 @@
 #include <memory>
 #include <cstring>
 #include <vector>
+#include <cstdio>
 
 namespace fs = std::filesystem;
 
@@ -542,4 +543,83 @@ void CorpusMiner::save_to_csv(const std::vector<Phrase>& res, const std::string&
         }
         f << "\"\n";
     }
+}
+
+void CorpusMiner::export_to_spmf(const std::string& path) const {
+    std::ofstream out(path);
+    if (!out.is_open()) {
+        // Рекомендуется добавить проверку открытия файла
+        return;
+    }
+
+    for (uint32_t i = 0; i < num_docs(); ++i) {
+        const auto& doc = get_doc(i);
+        for (size_t j = 0; j < doc.size(); ++j) {
+            // Записываем элемент и сразу после него -1 (конец айтемсета)
+            out << doc[j] << " -1 ";
+        }
+        // В конце каждой строки записываем -2 (конец последовательности)
+        out << "-2\n";
+    }
+}
+
+void CorpusMiner::import_from_spmf(const std::string& spmf_out, const std::string& final_csv) {
+    std::ifstream in(spmf_out);
+    std::vector<Phrase> results;
+    std::string line;
+
+    while (std::getline(in, line)) {
+        if (line.empty()) continue;
+
+        // SPMF format: "item1 item2 item3 #SUP: count"
+        size_t sup_pos = line.find("#SUP:");
+        if (sup_pos == std::string::npos) continue;
+
+        std::string items_part = line.substr(0, sup_pos);
+        int support = std::stoi(line.substr(sup_pos + 5));
+
+        std::stringstream ss(items_part);
+        uint32_t token;
+        std::vector<uint32_t> tokens;
+        while (ss >> token) tokens.push_back(token);
+
+        // SPMF doesn't provide positions, so we store doc_ids by re-scanning or leaving empty.
+        // For compatibility with save_to_csv, we'll just store the support count.
+        results.push_back({tokens, {}, (size_t)support});
+    }
+
+    std::cout << "[SPMF] Parsed " << results.size() << " phrases from SPMF output." << std::endl;
+    save_to_csv(results, final_csv);
+}
+
+void CorpusMiner::run_spmf(const std::string& algo,
+                           const std::string& spmf_params,
+                           const std::string& jar_path,
+                           int min_docs,
+                           const std::string& output_csv) {
+    std::string input_tmp = "spmf_input.txt";
+    std::string output_tmp = "spmf_output.txt";
+
+    std::cout << "[SPMF] Converting corpus to SPMF format..." << std::endl;
+    export_to_spmf(input_tmp);
+
+    // Construct Command
+    // Format: java -jar spmf.jar run Algorithm input output params
+    std::string cmd = "java -jar " + jar_path + " run " + algo + " " + input_tmp + " " + output_tmp + " " + spmf_params;
+
+    std::cout << "[SPMF] Executing: " << cmd << std::endl;
+
+    auto start = start_timer();
+    int ret = std::system(cmd.c_str());
+    stop_timer("SPMF Java Execution", start);
+
+    if (ret != 0) {
+        std::cerr << "[ERROR] SPMF execution failed with code " << ret << std::endl;
+    } else {
+        import_from_spmf(output_tmp, output_csv);
+    }
+
+    // Cleanup
+    std::filesystem::remove(input_tmp);
+    std::filesystem::remove(output_tmp);
 }
