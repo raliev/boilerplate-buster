@@ -4,13 +4,14 @@ This repository contains a high-performance implementation of a corpus-driven me
 
 ## Overview
 
-Modern web corpora may contain significant "template noise" (navigation menus, legal footers, and dynamic UI blocks; often without clear patterns) that inflates index size and diminishes retrieval precision. This tool provides a scalable solution to identify these fragments:
+Modern web corpora may contain significant "template noise" (navigation menus, legal footers, and dynamic UI blocks; often without clear patterns) that inflates index size and diminishes retrieval precision. This tool provides a scalable solution to identify these fragments.
 
-Key points:
+The proposed algorithm architecture facilitates an efficient, multi-stage pipeline for the extraction of maximal frequent phrases from a discrete corpus $\mathcal{C}$ by synthesizing multi-modal storage strategies with a priority-based greedy expansion heuristic. The process is initiated through parallelized tokenization and 32-bit integer encoding via the OpenMP framework, which establishes a global vocabulary $\Sigma$ while simultaneously calculating individual word document frequencies ($df$). This preliminary analysis allows for the immediate pruning of sequences containing tokens that fail to satisfy the minimum support threshold $\sigma$. To further optimize the search space, a probabilistic estimation phase is implemented using a counting Bloom Filter. By mapping $n$-grams to a set of atomic 8-bit counters $\mathcal{B}$ via an FNV-1a hash function, the system can efficiently identify and discard infrequent candidates with minimal memory overhead before they enter the sorting stage.
 
-* **Dictionary-encoded tokenization** for memory efficiency.
-* **Dual-algorithm support**: A novel high-throughput **Bloom-gram** miner 
-* **Maximality Guarantee**: Eliminating redundancy to ensure only the most informative, non-overlapping sequences are returned.
+Initial $n$-gram seed generation is managed through a dual-path execution strategy that adapts to the available hardware constraints. Depending on the specified memory limits, the system either employs an external-memory sort-merge strategy---utilizing lexicographically sorted binary chunks and a $k$-way priority merge---or executes a high-speed parallel sort of the seed buffer entirely within RAM to eliminate disk I/O latency. Once validated, these candidates are ranked by a textual coverage scoring function $\Psi(P) = |P| \cdot df(P)$, which prioritizes phrases covering the largest cumulative "text area".
+
+The final extraction phase utilizes a greedy expansion heuristic with path compression. For each candidate, the algorithm evaluates all possible forward-adjacent tokens and appends the specific token $t^*$ that yields the highest unique document support, provided the condition $df(P \cup \{t^*\}) \ge \sigma$ is maintained. To ensure the property of maximality and prevent the extraction of redundant sub-sequences, a global bitmask $\mathcal{M}$ tracks the processed status of every token position in the corpus. This ensures that once a dominant phrase is finalized, its constituent tokens are marked to suppress the output of lower-scoring fragments.
+
 
 **BIDE+** implementation to use as a baseline for comparative analysis.
 
