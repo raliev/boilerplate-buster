@@ -14,6 +14,18 @@ The final extraction phase utilizes a greedy expansion heuristic with path compr
 
 **BIDE+** implementation to use as a baseline for comparative analysis.
 
+## Getting Started
+
+```bash
+cd corpus_miner
+make
+./corpus_miner ../tests/test1 --ngrams 3 --n 3 --algo bloomspan
+cat results_max.csv
+python3 process_results_csv.py --min_l=3
+open visualization.html
+```
+
+
 ## Algorithms
 
 The framework supports multiple mining strategies depending on the research objective:

@@ -672,13 +672,37 @@ std::vector<Phrase> BloomNgramMiner::mine(const CorpusMiner& corpus,
             } else break;
         }
 
+        if (!cand.occs.empty()) {
+                    bool has_common_prefix = false;
+                    uint32_t first_doc = cand.occs[0].doc_id;
+                    int first_pos = (int)cand.occs[0].pos;
+
+                    if (first_pos > 0) {
+                        uint32_t common_prev = corpus.get_doc(first_doc)[first_pos - 1];
+                        bool all_match = true;
+                        for (const auto& o : cand.occs) {
+                            if (o.pos == 0 || corpus.get_doc(o.doc_id)[o.pos - 1] != common_prev) {
+                                all_match = false;
+                                break;
+                            }
+                        }
+                        if (all_match) has_common_prefix = true;
+                    }
+
+                    if (has_common_prefix) {
+                        continue; // Skip this phrase: it is not backward-closed
+                    }
+                }
+
         for (auto& o : cand.occs) {
             for (uint32_t i = 0; i < (uint32_t)cand.tokens.size(); ++i) {
                 if (o.pos + i < processed[o.doc_id].size())
                     processed[o.doc_id][o.pos + i] = true;
             }
         }
-        final_phrases.push_back(std::move(cand));
+        if (cand.tokens.size() >= (size_t)params.min_l) {
+             final_phrases.push_back(std::move(cand));
+         }
     }
     std::cout << std::endl;
     stop_timer("Expansion & Pruning", s3_start);

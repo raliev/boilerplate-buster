@@ -21,6 +21,7 @@ private:
     std::mutex dict_mtx;
 
     int max_threads = 0;
+    int min_tokens = 0;
     size_t memory_limit_mb = 0;
 
     std::string file_mask = "";
@@ -41,24 +42,27 @@ private:
     const std::vector<uint32_t>& fetch_doc(uint32_t doc_id) const;
 
     void export_to_spmf(const std::string& path) const;
-    void import_from_spmf(const std::string& spmf_out, const std::string& final_csv);
+    void import_from_spmf(const std::string& spmf_out, const std::string& final_csv, int min_l);
+
 
 public:
 
     void run_spmf(const std::string& algo,
-                  const std::string& spmf_params,
-                  const std::string& jar_path,
-                  int min_docs,
-                  const std::string& output_csv);
+              const std::string& spmf_params,
+              const std::string& jar_path,
+              int min_docs,
+              const std::string& output_csv,
+              int min_l);
 
     void set_mask(const std::string& mask) { file_mask = mask; }
 
-    void set_limits(int threads, size_t mem_mb, size_t cache_size, bool in_mem, bool preload) {
+    void set_limits(int threads, size_t mem_mb, size_t cache_size, bool in_mem, bool preload, int min_l) {
         max_threads    = threads;
         memory_limit_mb = mem_mb;
         max_cache_size  = cache_size;
         in_memory_only  = in_mem;
         preload_cache   = preload;
+        min_tokens = min_l;
     }
 
     int get_max_threads() const { return max_threads; }

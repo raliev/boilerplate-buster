@@ -545,14 +545,18 @@ void CorpusMiner::save_to_csv(const std::vector<Phrase>& res, const std::string&
         for (auto& o : p.occs) d_ids.insert(o.doc_id);
 
         size_t count = 0;
-        for (auto id : d_ids) {
+        if (d_ids.empty()) {
+            f << "\"\n"; // Если это результат SPMF без позиций
+        } else {
+            for (auto id : d_ids) {
             if (id < file_paths.size()) {
-                f << file_paths[id];
-                if (++count >= 2) break; // Limit to 2 examples
-                if (count < d_ids.size()) f << "|";
+                    f << file_paths[id];
+                    if (++count >= 2) break; // Limit to 2 examples
+                    if (count < d_ids.size()) f << "|";
+                }
             }
+            f << "\"\n";
         }
-        f << "\"\n";
     }
 }
 
@@ -574,7 +578,7 @@ void CorpusMiner::export_to_spmf(const std::string& path) const {
     }
 }
 
-void CorpusMiner::import_from_spmf(const std::string& spmf_out, const std::string& final_csv) {
+void CorpusMiner::import_from_spmf(const std::string& spmf_out, const std::string& final_csv, int min_l) {
     std::ifstream in(spmf_out);
     std::vector<Phrase> results;
     std::string line;
@@ -590,13 +594,19 @@ void CorpusMiner::import_from_spmf(const std::string& spmf_out, const std::strin
         int support = std::stoi(line.substr(sup_pos + 5));
 
         std::stringstream ss(items_part);
-        uint32_t token;
+        int64_t val;
         std::vector<uint32_t> tokens;
-        while (ss >> token) tokens.push_back(token);
+        while (ss >> val) {
+            if (val != -1) {
+                tokens.push_back(static_cast<uint32_t>(val));
+            }
+        }
 
         // SPMF doesn't provide positions, so we store doc_ids by re-scanning or leaving empty.
         // For compatibility with save_to_csv, we'll just store the support count.
-        results.push_back({tokens, {}, (size_t)support});
+        if (tokens.size() >= (size_t)min_l) {
+                    results.push_back({tokens, {}, (size_t)support});
+                }
     }
 
     std::cout << "[SPMF] Parsed " << results.size() << " phrases from SPMF output." << std::endl;
@@ -604,10 +614,11 @@ void CorpusMiner::import_from_spmf(const std::string& spmf_out, const std::strin
 }
 
 void CorpusMiner::run_spmf(const std::string& algo,
-                           const std::string& spmf_params,
-                           const std::string& jar_path,
-                           int min_docs,
-                           const std::string& output_csv) {
+                                const std::string& spmf_params,
+                                const std::string& jar_path,
+                                int min_docs,
+                                const std::string& output_csv,
+                                int min_l) {
     std::string input_tmp = "spmf_input.txt";
     std::string output_tmp = "spmf_output.txt";
 
@@ -627,7 +638,7 @@ void CorpusMiner::run_spmf(const std::string& algo,
     if (ret != 0) {
         std::cerr << "[ERROR] SPMF execution failed with code " << ret << std::endl;
     } else {
-        import_from_spmf(output_tmp, output_csv);
+        import_from_spmf(output_tmp, output_csv, min_l);
     }
 
     // Cleanup

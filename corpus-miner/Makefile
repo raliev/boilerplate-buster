@@ -27,7 +27,11 @@ else
 endif
 
 TARGET = corpus_miner
-SRCS = main.cpp corpus_miner.cpp _ours/bloom_gram_miner.cpp bide/bide_miner.cpp signal_handler.cpp # Added bide_miner.cpp
+SRCS = main.cpp corpus_miner.cpp \
+         _ours/bloom_gram_miner.cpp \
+          bide/bide_miner.cpp \
+       clospan/clospan_miner.cpp \
+       signal_handler.cpp
 OBJS = $(SRCS:.cpp=.o)
 
 .PHONY: all clean clean-reports clean-all

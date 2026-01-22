@@ -15,6 +15,11 @@ struct Phrase {
     size_t support;
 };
 
+struct SupportInfo {
+    int count = 0;
+    std::vector<Occurrence> matches;
+};
+
 struct VectorHasher {
     size_t operator()(const std::vector<uint32_t>& v) const {
         size_t seed = v.size();

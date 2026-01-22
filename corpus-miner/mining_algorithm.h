@@ -11,6 +11,7 @@ struct MiningParams {
     int min_docs;
     int ngrams;
     std::string output_csv;
+    int min_l;
 };
 
 // Abstract interface for all sequence mining algorithms

@@ -29,6 +29,7 @@ int main(int argc, char** argv) {
     char csv_delimiter = ',';
     int threads = 0;
     int cache_size = 1000;
+    int min_l = 0;
     double sampling = 1.0;
     bool in_mem = false;
     bool preload = false;
@@ -47,6 +48,7 @@ int main(int argc, char** argv) {
         else if (arg == "--spmf-jar-location" && i + 1 < argc) spmf_jar = argv[++i];
         else if (arg == "--mask" && i + 1 < argc) mask = argv[++i];
         else if (arg == "--ngrams" && i + 1 < argc) ngrams = std::stoi(argv[++i]);
+        else if (arg == "--min_l" && i + 1 < argc) min_l = std::stoi(argv[++i]);
         else if (arg == "--csv-delimiter" && i + 1 < argc) {
             std::string delim = argv[++i];
             if (delim == "\\t") csv_delimiter = '\t';
@@ -62,11 +64,13 @@ int main(int argc, char** argv) {
         else if (arg == "--algo" && i + 1 < argc) algo_name = argv[++i];   // NEW
     }
 
+    if (min_l == 0) min_l = ngrams;
+
     std::cout << "[START] Initializing Miner..." << std::endl;
     if (in_mem) std::cout << "[MODE] Running in In-Memory mode (No Disk BIN)" << std::endl;
 
     CorpusMiner corpus;
-    corpus.set_limits(threads, mem_limit, cache_size, in_mem, preload);
+    corpus.set_limits(threads, mem_limit, cache_size, in_mem, preload, min_l);
     corpus.set_mask(mask);
 
     if (fs::is_regular_file(input_path)) {
@@ -76,17 +80,16 @@ int main(int argc, char** argv) {
     }
 
 if (use_spmf) {
-        // If user didn't provide specific params, use the default min_docs
         if (spmf_params.empty()) spmf_params = std::to_string(min_docs);
         std::cout << "[START] Entering SPMF Wrapper Mode..." << std::endl;
         std::cout << "[START] Beginning mining with algorithm=" << algo_name
-                      << ", min_docs=" << min_docs << ", ngrams=" << ngrams << std::endl;
-        corpus.run_spmf(algo_name, spmf_params, spmf_jar, min_docs, "results_max.csv");
+                      << ", min_docs=" << min_docs << ", min_l=" << min_l << std::endl;
+        corpus.run_spmf(algo_name, spmf_params, spmf_jar, min_docs, "results_max.csv", min_l);
     } else {
         // Standard C++ execution
         AlgorithmKind kind = parse_algorithm_kind(algo_name);
         auto algo = make_algorithm(kind);
-        MiningParams params{min_docs, ngrams, "results_max.csv"};
+        MiningParams params{min_docs, ngrams, "results_max.csv", min_l};
         std::cout << "[START] Beginning mining with algorithm=" << algo_name
                       << ", min_docs=" << min_docs << ", ngrams=" << ngrams << std::endl;
         std::vector<Phrase> phrases = algo->mine(corpus, params);

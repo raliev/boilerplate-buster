@@ -67,7 +67,7 @@ std::vector<Phrase> BideMiner::mine(const CorpusMiner& corpus, const MiningParam
         // Check forward closure for result validity 
         bool is_closed = is_forward_closed(current_sup, occurs);
 
-        if (patt.size() >= 1 && is_closed) {
+        if (patt.size() >= (size_t)params.min_l && is_closed) {
             results.push_back({patt, matches, (size_t)current_sup});
         }
 
