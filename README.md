@@ -1,18 +1,10 @@
 # Automated Discovery of Invariant Document Fragments
 
-This repository contains a high-performance implementation of a corpus-driven methodology for the automated discovery of recurring fragments (boilerplate) in large-scale text collections. The system identifies **Maximal Frequent Phrases**: the longest contiguous sequences of tokens that appear across a significant number of unique documents.
+This repository presents a novel, scalable seed-and-expand algorithm for the automated discovery of maximal non-gapped sequential patterns within massive textual corpora. 
 
-## Overview
+Established sequential pattern mining frameworks—such as PrefixSpan and BIDE—lack the necessary heuristics to directly isolate the longest most frequent sequences, often resulting in fragmented and redundant outputs. 
 
-Modern web corpora may contain significant "template noise" (navigation menus, legal footers, and dynamic UI blocks; often without clear patterns) that inflates index size and diminishes retrieval precision. This tool provides a scalable solution to identify these fragments.
-
-The proposed algorithm architecture facilitates an efficient, multi-stage pipeline for the extraction of maximal frequent phrases from a discrete corpus $\mathcal{C}$ by synthesizing multi-modal storage strategies with a priority-based greedy expansion heuristic. The process is initiated through parallelized tokenization and 32-bit integer encoding via the OpenMP framework, which establishes a global vocabulary $\Sigma$ while simultaneously calculating individual word document frequencies ($df$). This preliminary analysis allows for the immediate pruning of sequences containing tokens that fail to satisfy the minimum support threshold $\sigma$. To further optimize the search space, a probabilistic estimation phase is implemented using a counting Bloom Filter. By mapping $n$-grams to a set of atomic 8-bit counters $\mathcal{B}$ via an FNV-1a hash function, the system can efficiently identify and discard infrequent candidates with minimal memory overhead before they enter the sorting stage.
-
-Initial $n$-gram seed generation is managed through a dual-path execution strategy that adapts to the available hardware constraints. Depending on the specified memory limits, the system either employs an external-memory sort-merge strategy---utilizing lexicographically sorted binary chunks and a $k$-way priority merge---or executes a high-speed parallel sort of the seed buffer entirely within RAM to eliminate disk I/O latency. Once validated, these candidates are ranked by a textual coverage scoring function $\Psi(P) = |P| \cdot df(P)$, which prioritizes phrases covering the largest cumulative "text area".
-
-The final extraction phase utilizes a greedy expansion heuristic with path compression. For each candidate, the algorithm evaluates all possible forward-adjacent tokens and appends the specific token $t^*$ that yields the highest unique document support. To ensure the property of maximality and prevent the extraction of redundant sub-sequences, a global bitmask $\mathcal{M}$ tracks the processed status of every token position in the corpus. This ensures that once a dominant phrase is finalized, its constituent tokens are marked to suppress the output of lower-scoring fragments.
-
-**BIDE+** implementation to use as a baseline for comparative analysis.
+Our approach specializes in identifying Maximal Frequent Phrases—the longest contiguous substrings meeting a specific document support threshold—through an iterative greedy expansion model. The algorithm utilizes a multi-phase pipeline involving dictionary-encoded tokenization and aggressive probabilistic pruning via a Counting Bloom Filter to isolate high-potential n-gram seeds. To maintain maximality and prevent redundancy, a global occupancy bitmask is employed to track token-level coverage. By specializing in contiguous substrings and avoiding recursive projections in favor of a priority-based expansion path, the proposed methodology is at least an order of magnitude faster than traditional sequential pattern mining baselines.
 
 ## Getting Started
 
